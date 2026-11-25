@@ -127,10 +127,14 @@ class Settings:
         cfg_dir = Path(config_dir) if config_dir else suite_path.resolve().parent.parent
         m = load_yaml(cfg_dir / "models.yaml")
         suite = load_yaml(suite_path)
+        protocol = load_yaml(cfg_dir / "protocol.yaml")
+        # 彩排用：套件可以缩小题量。改过之后协议哈希就变了，所以 require_frozen_protocol 的套件用不了这个口子。
+        for name, over in suite.get("benchmark_overrides", {}).items():
+            protocol["benchmarks"][name] = {**protocol["benchmarks"].get(name, {}), **over}
         return Settings(
             models=m["models"],
             model_configs=m["model_configs"],
-            protocol=load_yaml(cfg_dir / "protocol.yaml"),
+            protocol=protocol,
             suite=suite,
             root=cfg_dir.parent,
             run_dir=Path(out_root) / suite["name"],
