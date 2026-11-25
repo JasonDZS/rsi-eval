@@ -18,7 +18,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .budget import BudgetExhausted, Ledger, Meter, SpendCapExceeded, Usage
-from .llm import anthropic_key
+from .llm import DEFAULT_ANTHROPIC_KEY_ENV, anthropic_key
 
 
 def parse_usage(body: bytes, content_type: str) -> Usage:
@@ -102,12 +102,17 @@ class MeteringProxy:
                 return role
         return "improver"
 
+    def _spec(self, role: str) -> dict:
+        """角色对应的模型定义（取 api_key_env 用）；独立运行时没有角色表，返回空。"""
+        return self.ctx.settings.models.get(self.ctx.roles.get(role), {}) or {}
+
     def forward(self, path, raw, req, headers, role):
         if self.upstream == "mock":
             return self._mock(path, req, role)
         h = {k: v for k, v in headers.items() if k.lower() in ("content-type", "anthropic-version", "anthropic-beta", "accept")}
-        if "/messages" in path and anthropic_key():
-            h["x-api-key"] = anthropic_key()
+        key = anthropic_key(self._spec(role))
+        if "/messages" in path and key:
+            h["x-api-key"] = key
         else:
             h["authorization"] = "Bearer " + os.environ.get("RSI_EVAL_UPSTREAM_KEY", os.environ.get("OPENAI_API_KEY", ""))
         r = urllib.request.Request(self.upstream + path, data=raw, headers=h, method="POST")
@@ -137,6 +142,19 @@ class MeteringProxy:
         return {"ANTHROPIC_BASE_URL": self.url, "ANTHROPIC_API_KEY": "rsi-eval-proxy",
                 "OPENAI_BASE_URL": self.url + "/v1", "OPENAI_API_BASE": self.url + "/v1", "OPENAI_API_KEY": "rsi-eval-proxy",
                 "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost"}
+
+    def secret_env_names(self) -> set:
+        """装着真实密钥的环境变量名：默认的实验密钥、上游密钥，以及各模型自己指定的 api_key_env。"""
+        names = {DEFAULT_ANTHROPIC_KEY_ENV, "RSI_EVAL_UPSTREAM_KEY"}
+        names |= {m["api_key_env"] for m in self.ctx.settings.models.values() if isinstance(m, dict) and m.get("api_key_env")}
+        return names
+
+    def child_env(self, base: dict | None = None, extra: dict | None = None) -> dict:
+        """子进程的完整环境：继承 base（默认当前环境），去掉所有真实密钥，再指向代理。
+        真实密钥只留在代理进程里，子进程读不到，也就没法绕过代理直接调用。"""
+        secrets = self.secret_env_names()
+        env = {k: v for k, v in (os.environ if base is None else base).items() if k not in secrets}
+        return {**env, **self.env(), **(extra or {})}
 
     def __enter__(self):
         threading.Thread(target=self.server.serve_forever, daemon=True).start()

@@ -8,7 +8,6 @@
 """
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -52,7 +51,7 @@ class ExternalRepoAdapter(FrameworkAdapter):
     def run(self, cmd: list[str], ctx: Ctx, cwd: Path, env: dict | None = None, timeout: float | None = None) -> subprocess.CompletedProcess:
         """在计量代理后面跑上游命令。上游的所有模型调用都会记到 ctx 的 Meter 上；预算用完抛 BudgetExhausted。"""
         with MeteringProxy(ctx, self.cfg.get("upstream_api", self.upstream_api)) as px:
-            p = subprocess.run(cmd, cwd=cwd, env={**os.environ, **px.env(), **(env or {})}, capture_output=True, text=True, timeout=timeout)
+            p = subprocess.run(cmd, cwd=cwd, env=px.child_env(extra=env), capture_output=True, text=True, timeout=timeout)
             if px.exhausted:
                 raise BudgetExhausted(f"{self.name}: budget exhausted inside upstream process")
         if p.returncode != 0:
