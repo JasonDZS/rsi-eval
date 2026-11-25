@@ -18,6 +18,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .budget import BudgetExhausted, Ledger, Meter, SpendCapExceeded, Usage
+from .llm import anthropic_key
 
 
 def parse_usage(body: bytes, content_type: str) -> Usage:
@@ -105,8 +106,8 @@ class MeteringProxy:
         if self.upstream == "mock":
             return self._mock(path, req, role)
         h = {k: v for k, v in headers.items() if k.lower() in ("content-type", "anthropic-version", "anthropic-beta", "accept")}
-        if "/messages" in path and os.environ.get("ANTHROPIC_API_KEY"):
-            h["x-api-key"] = os.environ["ANTHROPIC_API_KEY"]
+        if "/messages" in path and anthropic_key():
+            h["x-api-key"] = anthropic_key()
         else:
             h["authorization"] = "Bearer " + os.environ.get("RSI_EVAL_UPSTREAM_KEY", os.environ.get("OPENAI_API_KEY", ""))
         r = urllib.request.Request(self.upstream + path, data=raw, headers=h, method="POST")

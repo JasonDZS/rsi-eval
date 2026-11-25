@@ -21,7 +21,7 @@ cat runs/smoke/report.md
 
 ```bash
 pip install -e ".[anthropic,data]"                       # 其他厂商加 openai
-export ANTHROPIC_API_KEY=...
+export RSI_EVAL_ANTHROPIC_KEY=...                        # 实验专用密钥
 rsi-eval data prepare gsm8k gsm_hard mmlu drop mgsm gpqa # 导出固定的数据文件到 data/
 rsi-eval protocol freeze                                 # 写死判定标准
 rsi-eval plan --suite configs/suites/pilot.yaml          # 看要跑多少次，不调用模型

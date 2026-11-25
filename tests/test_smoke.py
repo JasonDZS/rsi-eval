@@ -117,3 +117,17 @@ def test_stats():
     assert lo < 2.0 < hi
     assert signflip_p([1, 1, 1, 1, 1]) == pytest.approx(1 / 32)
     assert slope([0, 1, 2, 3]) == pytest.approx(1.0)
+
+
+def test_anthropic_key_env_order(monkeypatch):
+    from rsi_eval.llm import anthropic_key
+
+    for k in ("RSI_EVAL_ANTHROPIC_KEY", "ANTHROPIC_API_KEY", "MY_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    assert anthropic_key() is None
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "c")
+    assert anthropic_key() == "c"
+    monkeypatch.setenv("RSI_EVAL_ANTHROPIC_KEY", "b")
+    assert anthropic_key() == "b"
+    monkeypatch.setenv("MY_KEY", "a")
+    assert anthropic_key({"api_key_env": "MY_KEY"}) == "a"
