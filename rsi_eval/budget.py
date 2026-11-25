@@ -155,7 +155,7 @@ class Meter:
                     raise SpendCapExceeded(f"real spend reached hard cap ${m.hard_cap_usd}")
             m = m.parent
 
-    def charge(self, phase: str, role: str, model: str, usage: Usage, usd: float, cached: bool = False) -> None:
+    def charge(self, phase: str, role: str, model: str, usage: Usage, usd: float, cached: bool = False, refusal: bool = False) -> None:
         m: Meter | None = self
         while m is not None:
             with m._lock:
@@ -179,5 +179,6 @@ class Meter:
                 "output_tokens": usage.output_tokens,
                 "usd": round(usd, 8),
                 "cached": cached,
+                **({"refusal": True} if refusal else {}),  # 模型拒答（没有内容）：照常计费，流水里标出来
             }
         )

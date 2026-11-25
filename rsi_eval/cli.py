@@ -3,12 +3,14 @@
 rsi-eval plan    --suite configs/suites/pilot.yaml      # 列出要跑的格子数，不调用模型
 rsi-eval run     --suite configs/suites/pilot.yaml      # 跑（可中断续跑）
 rsi-eval report  --suite configs/suites/pilot.yaml      # 汇总三层结论
-rsi-eval data prepare gsm8k mmlu ...                    # 把基准数据导出成固定的 jsonl
+rsi-eval vendor fetch                                   # 拉取上游框架（ADAS、Gödel Agent）到 vendor/，检出固定的 commit
+rsi-eval data prepare gsm8k mmlu ...                    # 把基准数据导出成固定的 jsonl，并写下带 sha256 的清单
 rsi-eval protocol freeze                                # 写死判定标准
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -67,19 +69,38 @@ def cmd_data(a):
     root = Path(a.root)
     protocol = load_yaml(root / "configs" / "protocol.yaml")
     for name in a.names:
-        b = get_benchmark(name, protocol, root / "data")
+        b = get_benchmark(name, protocol, (root / "data").resolve())
         rows = b.prepare()
         b.data_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(b.data_path, "w", encoding="utf-8") as f:
-            for r in rows:
-                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        blob = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows).encode("utf-8")
+        b.data_path.write_bytes(blob)
+        digest = hashlib.sha256(blob).hexdigest()
+        if b.manifest_path.exists() and json.loads(b.manifest_path.read_text(encoding="utf-8"))["jsonl_sha256"] != digest and not a.update_manifest:
+            sys.exit(f"{name}: 导出的数据和仓库里的清单 {b.manifest_path} 不一致。确认是有意更换数据版本后加 --update-manifest。")
+        manifest = {"benchmark": name, "rows": len(rows), "jsonl_sha256": digest, "source": b.provenance()}
+        b.manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
         b._splits = None
         print(f"{name}: {len(rows)} 题 -> {b.data_path}；切分 " + ", ".join(f"{k}={len(v)}" for k, v in b.splits().items()))
 
 
-def cmd_protocol(a):
-    import hashlib
+def cmd_vendor(a):
+    from .frameworks import ADAPTERS
+    from .frameworks.external import ExternalRepoAdapter, fetch_repo, repo_head
 
+    root = Path(a.root)
+    pinned = {n: c for n, c in ADAPTERS.items() if issubclass(c, ExternalRepoAdapter) and c.commit}
+    for name in a.names or sorted(pinned):
+        if name not in pinned:
+            sys.exit(f"{name}: 没有固定 commit 的上游框架（有：{sorted(pinned)}）")
+        cls, dst = pinned[name], root / "vendor" / name
+        if a.action == "fetch":
+            print(f"{name}: {fetch_repo(cls.repo_url, cls.commit, dst)} -> {dst} @ {cls.commit}")
+        else:
+            head = repo_head(dst) if dst.exists() else "(没有拉取)"
+            print(f"{name}: 固定 {cls.commit}，本地 {head} {'✓' if head == cls.commit else '✗'}")
+
+
+def cmd_protocol(a):
     root = Path(a.root)
     h = hashlib.sha256(json.dumps(load_yaml(root / "configs" / "protocol.yaml"), sort_keys=True).encode()).hexdigest()[:16]
     (root / "configs" / "protocol.lock").write_text(h + "\n")
@@ -107,7 +128,13 @@ def main(argv=None):
     p.add_argument("action", choices=["prepare"])
     p.add_argument("names", nargs="+")
     p.add_argument("--root", default=".")
+    p.add_argument("--update-manifest", action="store_true", help="有意更换数据版本时，覆盖仓库里的清单")
     p.set_defaults(fn=cmd_data)
+    p = sub.add_parser("vendor", help="拉取上游框架代码到 vendor/ 并检出固定的 commit")
+    p.add_argument("action", choices=["fetch", "status"])
+    p.add_argument("names", nargs="*")
+    p.add_argument("--root", default=".")
+    p.set_defaults(fn=cmd_vendor)
     p = sub.add_parser("protocol")
     p.add_argument("action", choices=["freeze"])
     p.add_argument("--root", default=".")

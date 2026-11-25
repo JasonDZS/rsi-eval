@@ -1,5 +1,6 @@
 # 试点（最小档）：Gödel Agent（被测）+ ADAS（对照），问答基准，配置 A。
-# 上游两个框架的适配器接好之前，可以先把 frameworks 换成 [ref_l2, ref_l1] 用真实模型试跑协议。
+# 两个上游框架已接入，但它们的提示词会被 Claude 5.5 拒答（见 README“目前的状态”）：
+# 配置 A 下跑到这里会因拒答率过高中止。换成其他厂商的执行模型，或先把 frameworks 换成 [ref_l2, ref_l1]。
 name: pilot
 tier: minimal
 model_config: A

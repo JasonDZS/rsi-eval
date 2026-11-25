@@ -22,7 +22,7 @@ benchmarks:
   drop:  {sizes: {search: 128, select: 128, report: 800}}
   mgsm:  {sizes: {search: 128, select: 128, report: 800}}
   mmlu:  {sizes: {search: 128, select: 128, report: 800}}
-  gpqa:  {sizes: {search: 64,  select: 64,  report: 320}}
+  gpqa:  {sizes: {search: 32,  select: 32,  report: 134}}   # 上游自带的 diamond 子集共 198 题；上游自己是 32 题验证、其余测试
   # 试点：未见任务（改进运行也在这上面做，所以同样切三份）
   gsm8k:    {sizes: {search: 128, select: 128, report: 800}}
   gsm_hard: {sizes: {search: 128, select: 128, report: 800}}

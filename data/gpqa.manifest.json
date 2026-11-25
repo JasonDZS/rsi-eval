@@ -1,0 +1,12 @@
+{
+ "benchmark": "gpqa",
+ "rows": 198,
+ "jsonl_sha256": "399a992bbb880f945d3972d7ebc2cf1e08f77f57da255e08681e9f127ac52cf5",
+ "source": {
+  "repo": "https://github.com/ShengranHu/ADAS",
+  "commit": "2702bee8fefda42255efc5be9f60e3bd3db96ae4",
+  "files": {
+   "dataset/gpqa_diamond.csv": "41d1213cd7a4998605a26c2798500652572007161b3a92817ba46b35befcd305"
+  }
+ }
+}

@@ -20,9 +20,10 @@ cat runs/smoke/report.md
 用真实模型：
 
 ```bash
-pip install -e ".[anthropic,data]"                       # 其他厂商加 openai
+pip install -e ".[anthropic,upstream]"                   # 其他厂商加 openai；upstream 是跑 ADAS / Gödel Agent 上游代码要的包
 export RSI_EVAL_ANTHROPIC_KEY=...                        # 实验专用密钥
-rsi-eval data prepare gsm8k gsm_hard mmlu drop mgsm gpqa # 导出固定的数据文件到 data/
+rsi-eval vendor fetch                                    # 拉取 ADAS、Gödel Agent 到 vendor/，检出固定的 commit
+rsi-eval data prepare gsm8k gsm_hard mmlu drop mgsm gpqa # 从上游自带的数据文件导出到 data/，逐个核对 sha256
 rsi-eval protocol freeze                                 # 写死判定标准
 rsi-eval plan --suite configs/suites/pilot.yaml          # 看要跑多少次，不调用模型
 rsi-eval run  --suite configs/suites/pilot.yaml --yes    # 付费模型必须显式 --yes
@@ -67,12 +68,33 @@ rsi-eval report --suite configs/suites/pilot.yaml
 
 已实现并在离线假模型上跑通：全部 11 项实验的编排、记账、缓存、续跑、统计和报告；两个参考框架 `ref_l2`（改进器会改自己）和 `ref_l1`（改进器固定）；问答类基准的评分；LiveCodeBench 的评分；计量代理。
 
+**ADAS 和 Gödel Agent 已接入**（`frameworks/adas.py`、`frameworks/godel.py`，细节见 [docs/adapters.md](docs/adapters.md)）：
+
+| 框架 | 上游仓库 | 固定的 commit |
+|---|---|---|
+| ADAS | https://github.com/ShengranHu/ADAS | `2702bee8fefda42255efc5be9f60e3bd3db96ae4` |
+| Gödel Agent | https://github.com/Arvid-pku/Godel_Agent | `bbb508796be31c7140cdfc7106efd830a1324242` |
+
+上游文件一个字节不改。驱动脚本在子进程里导入上游代码，模型调用经计量代理按角色入账，执行模型由代理强制。
+六个问答数据集取自 ADAS 仓库自带的数据文件（两篇论文实际用的那一份），文件的 sha256 固定在 `benchmarks/qa.py`，
+导出结果的 sha256 记在 `data/*.manifest.json`，加载时核对。离线测试用真的上游代码加假模型（`tests/test_upstream.py`）。
+
 还没做、需要注意的：
 
-- **四个上游框架的适配器只有骨架**（`frameworks/external.py`）。公共部分（在计量代理后面跑上游子进程、冻结目录）已有，但每个框架怎么取出改进器和执行者、怎么跑一轮，需要对着上游代码写。运行到这里会报 `NotWired` 并说明要接什么。
-- **真实数据和真实模型都还没跑过**。`prepare()` 里的数据集 id 和字段名、Anthropic 与 OpenAI 兼容客户端都没有实际调用验证。
+- **这两个上游框架目前不能直接跑在 Claude 5.5 上。** 用真实模型冒烟时链路是通的（子进程、代理、记账、冻结都正常），
+  但上游的提示词要求模型把逐步推理写进 JSON 的 `thinking` / `reasoning` 字段，Claude 5.5 把这类请求当作
+  “提取推理过程”拒答（`stop_reason: refusal`，类别 `reasoning_extraction`），回复是空的，分数全是 0。
+  实测：ADAS 的 agent 提示词在 haiku / sonnet / opus 上都被拒；Gödel Agent 的初始 solver 在 haiku、opus 上被拒，sonnet 上通过；
+  另外 Gödel Agent 的 `tool_choice="required"` 在 sonnet / opus 上不被支持。
+  这是平台的安全限制，本仓库不去绕它。代理会把拒答记进流水（`refusal: true`），拒答率过半时适配器直接中止并说明原因。
+  要跑这两个框架，把执行模型（必要时连同改进模型）换成其他厂商的模型：在 `configs/models.yaml` 里加一个
+  `provider: openai_compat` 的模型，代理会按它的地址和密钥转发。
+- **HyperAgents、HGM 的适配器还是骨架**（`frameworks/external.py`），运行到这里会报 `NotWired` 并说明要接什么。
+- **GPQA 用的是上游自带的 diamond 子集（198 题）**，切分因此从 64/64/320 改成了 32/32/134（`configs/protocol.yaml`）。
+  Hugging Face 上的完整版需要授权，且这个环境下载不到 HF 的大文件。
 - **Polyglot 和 SWE-bench 的评分**交给框架适配器调用上游的 docker 评测脚本，本仓库不重复实现。
 - `ref_l2` / `ref_l1` 是协议自带的最小参考实现，不是任何论文的复现，用来验证协议和估方差。
+- 上游框架会执行模型写的代码。子进程的环境变量是白名单、拿不到真实密钥，但没有文件系统和网络隔离，正式跑建议放在容器里。
 
 ## 目录
 
@@ -83,11 +105,14 @@ rsi_eval/
   llm.py            模型客户端（mock、anthropic、openai 兼容）
   core.py           上下文、产物存档、评测缓存、配置
   benchmarks/       基准与切分
-  frameworks/       适配器接口、参考框架、上游框架骨架
+  frameworks/       适配器接口、参考框架、ADAS 和 Gödel Agent 适配器、其余上游框架骨架
+    drivers/        在子进程里调用上游代码的驱动脚本
   evaluation.py     并发评测
   runner.py         evolve() 与 improvement_run()
   experiments.py    E1–E11
   stats.py report.py
   proxy.py          给上游子进程用的计量代理
+vendor/<框架>/      上游代码（不进仓库，`rsi-eval vendor fetch` 拉取）
+data/               导出的数据（jsonl 不进仓库，带 sha256 的清单进仓库）
 runs/<套件>/        cells/ 每个格子的结果，artifacts/ 冻结的各代产物，ledger.jsonl，report.md
 ```

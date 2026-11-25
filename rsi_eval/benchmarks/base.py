@@ -55,10 +55,24 @@ class Benchmark(ABC):
     def data_path(self) -> Path:
         return self.data_dir / f"{self.name}.jsonl"
 
+    @property
+    def manifest_path(self) -> Path:
+        return self.data_dir / f"{self.name}.manifest.json"
+
+    def provenance(self) -> dict:
+        """数据来源（仓库、commit、各文件的 sha256），写进清单。"""
+        return {}
+
     def load_jsonl(self) -> list[Task]:
         if not self.data_path.exists():
             raise FileNotFoundError(f"{self.data_path} missing. Run: rsi-eval data prepare {self.name}")
-        rows = [json.loads(l) for l in self.data_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+        if self.manifest_path.exists():  # 清单进仓库：本地的数据文件必须和清单里记的是同一份
+            want = json.loads(self.manifest_path.read_text(encoding="utf-8"))["jsonl_sha256"]
+            got = hashlib.sha256(self.data_path.read_bytes()).hexdigest()
+            if got != want:
+                raise ProtocolViolation(f"{self.data_path} 的 sha256 是 {got}，清单 {self.manifest_path.name} 里是 {want}。重新运行 rsi-eval data prepare {self.name}")
+        # 只按 \n 切行：题目文本里可能有 U+2028 之类的字符，splitlines() 会把一行切断
+        rows = [json.loads(l) for l in self.data_path.read_text(encoding="utf-8").split("\n") if l.strip()]
         return [Task(str(r["id"]), r["input"], r["target"], r.get("meta", {})) for r in rows]
 
     def splits(self) -> dict[str, list[Task]]:

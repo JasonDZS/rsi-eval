@@ -1,25 +1,55 @@
-"""上游框架的接入层：Gödel Agent、ADAS、HyperAgents、HGM。
+"""上游框架的接入层：公共部分，以及还没接入的 HyperAgents、HGM 的骨架。
 
-现状：四个适配器只有骨架。公共部分（拉取并固定上游版本、在计量代理后面运行子进程、
-把目录冻结成产物）已经实现并测试过；每个框架“怎么取出改进器 / 执行者 / 存档、怎么跑一轮”
-这几处需要对着上游代码写，目前会抛 NotWired 并说明要接什么。接入步骤见 docs/adapters.md。
+已接入：ADAS（adas.py）、Gödel Agent（godel.py）。两者都固定了上游 commit，
+用 `rsi-eval vendor fetch` 拉到 vendor/<名字>/，运行时核对 HEAD 和固定的 commit 一致。
 
-下面的仓库地址是按论文公开信息填的，还没有实际拉取核对过。
+公共部分：拉取并固定上游版本、在计量代理后面运行子进程（run / run_driver）、把目录冻结成产物。
+HyperAgents、HGM 目前会抛 NotWired 并说明要接什么，仓库地址是按论文公开信息填的，还没有实际拉取核对过。
 """
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
+import sys
+import tempfile
+import threading
+import uuid
 from pathlib import Path
 
-from ..budget import BudgetExhausted
+from ..budget import BudgetExhausted, SpendCapExceeded
 from ..core import Artifact, Ctx
 from ..proxy import MeteringProxy
-from .base import FrameworkAdapter, SystemState, register
+from .base import FrameworkAdapter, SystemState, TaskResult, register
 
 
 class NotWired(NotImplementedError):
-    """这个上游框架的适配器还没接好。"""
+    """这个上游框架的适配器还没接好，或者上游代码没有就位。"""
+
+
+class UpstreamRefused(RuntimeError):
+    """模型大量拒答上游框架的提示词，继续跑没有意义。"""
+
+
+def repo_head(d: Path) -> str:
+    return subprocess.run(["git", "-C", str(d), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+
+
+def fetch_repo(url: str, commit: str, dst: Path) -> str:
+    """把上游仓库拉到 dst 并检出固定的 commit。已经在那个 commit 上就什么都不做。"""
+    if dst.exists() and repo_head(dst) == commit:
+        return "already pinned"
+    if not dst.exists():
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "clone", "--quiet", url, str(dst)], check=True)
+    else:
+        subprocess.run(["git", "-C", str(dst), "fetch", "--quiet", "origin"], check=True)
+    subprocess.run(["git", "-C", str(dst), "-c", "advice.detachedHead=false", "checkout", "--quiet", commit], check=True)
+    return "fetched"
+
+
+def new_id() -> str:
+    return uuid.uuid4().hex[:12]
 
 
 class ExternalRepoAdapter(FrameworkAdapter):
@@ -30,14 +60,30 @@ class ExternalRepoAdapter(FrameworkAdapter):
     upstream_api: str = "https://api.anthropic.com"
 
     # ---- 公共能力 ----
-    @property
-    def repo_dir(self) -> Path:
-        return Path(self.cfg.get("repo_dir", Path("vendor") / self.name))
+    _verified: set = set()
+    _verify_lock = threading.Lock()
 
-    def ensure_repo(self) -> Path:
-        d = self.repo_dir
+    def repo_dir(self, ctx: Ctx | None = None) -> Path:
+        if self.cfg.get("repo_dir"):
+            return Path(self.cfg["repo_dir"]).resolve()
+        root = ctx.settings.root if ctx is not None else Path(".")
+        return (Path(root) / "vendor" / self.name).resolve()
+
+    def ensure_repo(self, ctx: Ctx | None = None) -> Path:
+        """上游代码必须在 vendor/<名字>/，且 HEAD 就是固定的 commit（cfg.allow_unpinned 可跳过核对，结果里会记下实际 commit）。"""
+        d = self.repo_dir(ctx)
         if not d.exists():
-            raise NotWired(f"{self.name}: 上游代码不在 {d}。先 `git clone {self.repo_url} {d}` 并固定 commit。")
+            raise NotWired(f"{self.name}: 上游代码不在 {d}。先运行 `rsi-eval vendor fetch {self.name}`。")
+        key = (str(d), self.commit)
+        with self._verify_lock:
+            if self.commit and key not in self._verified and not self.cfg.get("allow_unpinned"):
+                head = repo_head(d)
+                if head != self.commit:
+                    raise NotWired(f"{self.name}: {d} 的 HEAD 是 {head}，固定的 commit 是 {self.commit}。运行 `rsi-eval vendor fetch {self.name}`。")
+                dirty = subprocess.run(["git", "-C", str(d), "status", "--porcelain", "--untracked-files=no"], capture_output=True, text=True).stdout.strip()
+                if dirty:
+                    raise NotWired(f"{self.name}: {d} 里的上游文件被改过：\n{dirty}")
+                self._verified.add(key)
         return d
 
     def workspace(self, ctx: Ctx, tag: str) -> Path:
@@ -45,18 +91,88 @@ class ExternalRepoAdapter(FrameworkAdapter):
         dst = ctx.settings.run_dir / "work" / self.name / tag
         if dst.exists():
             shutil.rmtree(dst)
-        shutil.copytree(self.ensure_repo(), dst, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+        shutil.copytree(self.ensure_repo(ctx), dst, ignore=shutil.ignore_patterns(".git", "__pycache__"))
         return dst
+
+    def _upstream(self, ctx: Ctx) -> str:
+        """代理把请求转给谁。两个角色都是假模型时走 mock（离线测试）。"""
+        provs = {ctx.settings.models[ctx.roles[r]].get("provider") for r in ("executor", "improver") if r in ctx.roles}
+        return "mock" if provs == {"mock"} else self.cfg.get("upstream_api", self.upstream_api)
 
     def run(self, cmd: list[str], ctx: Ctx, cwd: Path, env: dict | None = None, timeout: float | None = None) -> subprocess.CompletedProcess:
         """在计量代理后面跑上游命令。上游的所有模型调用都会记到 ctx 的 Meter 上；预算用完抛 BudgetExhausted。"""
-        with MeteringProxy(ctx, self.cfg.get("upstream_api", self.upstream_api)) as px:
+        with MeteringProxy(ctx, self._upstream(ctx)) as px:
             p = subprocess.run(cmd, cwd=cwd, env=px.child_env(extra=env), capture_output=True, text=True, timeout=timeout)
+            if px.cap_exceeded:
+                raise SpendCapExceeded(f"{self.name}: suite hard cap reached inside upstream process")
             if px.exhausted:
                 raise BudgetExhausted(f"{self.name}: budget exhausted inside upstream process")
         if p.returncode != 0:
             raise RuntimeError(f"{self.name}: `{' '.join(cmd)}` failed ({p.returncode}):\n{p.stderr[-2000:]}")
         return p
+
+    def run_driver(self, module: str, command: str, payload: dict, ctx: Ctx, cwd: Path, *, timeout: float, env: dict | None = None,
+                   log_to: Path | None = None) -> dict:
+        """在计量代理后面跑一个驱动脚本（rsi_eval/frameworks/drivers/ 下的模块），JSON 进、JSON 出。
+
+        驱动脚本在子进程里导入上游代码并调用它，模型生成的代码也只在这个子进程里执行。
+        子进程的环境是白名单，拿不到真实密钥；它的所有模型调用都经过代理按角色入账。
+        返回驱动写出的结果；子进程超时或崩溃时返回 {"error": ...}，由适配器决定怎么处理。
+        预算用完抛 BudgetExhausted，套件硬上限到了抛 SpendCapExceeded。
+        """
+        pkg_root = str(Path(__file__).resolve().parents[2])
+        with tempfile.TemporaryDirectory(prefix="rsi-driver-") as io_dir:
+            fin, fout = Path(io_dir) / "in.json", Path(io_dir) / "out.json"
+            fin.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            cmd = [sys.executable, "-m", module, command, "--in", str(fin), "--out", str(fout)]
+            with MeteringProxy(ctx, self._upstream(ctx)) as px:
+                child_env = px.child_env(extra={"PYTHONPATH": pkg_root, "PYTHONUNBUFFERED": "1", "PYTHONDONTWRITEBYTECODE": "1", **(env or {})}, minimal=True)
+                err = None
+                try:
+                    p = subprocess.run(cmd, cwd=cwd, env=child_env, capture_output=True, text=True, errors="replace", timeout=timeout)
+                    stdout, stderr = p.stdout, p.stderr
+                except subprocess.TimeoutExpired as e:
+                    p = None
+                    dec = lambda b: b.decode("utf-8", "replace") if isinstance(b, bytes) else (b or "")  # noqa: E731
+                    stdout, stderr, err = dec(e.stdout), dec(e.stderr), f"timeout after {timeout}s"
+                if log_to is not None:
+                    log_to.parent.mkdir(parents=True, exist_ok=True)
+                    log_to.write_text(f"$ {' '.join(cmd)}\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}\n", encoding="utf-8")
+                if px.cap_exceeded:
+                    raise SpendCapExceeded(f"{self.name}: suite hard cap reached inside upstream process")
+                if px.exhausted:
+                    raise BudgetExhausted(f"{self.name}: budget exhausted inside upstream process")
+                stats = {"calls": dict(px.calls), "refusals": dict(px.refusals)}
+            self._note_refusals(ctx, stats)
+            out = None
+            if fout.exists():
+                try:
+                    out = json.loads(fout.read_text(encoding="utf-8"))
+                except json.JSONDecodeError:
+                    err = err or "driver wrote unreadable output"
+            if not isinstance(out, dict):
+                out = {"error": err or f"driver exited with {p.returncode} and no output: {stderr[-1500:]}"}
+            out["_llm"] = stats
+            return out
+
+    # ---- 拒答 ----
+    _refusal_lock = threading.Lock()
+
+    def _note_refusals(self, ctx: Ctx, stats: dict) -> None:
+        """上游代码通常把空回复吞掉当成答错，拒答多了分数全是 0 却看不出原因。
+        这里按 模型 累计：调用满 min_calls 次且拒答率超过 abort_refusal_rate 就中止，免得把预算花在没有意义的运行上。"""
+        limit = float(self.cfg.get("abort_refusal_rate", 0.5))
+        with self._refusal_lock:
+            seen = self.__dict__.setdefault("_refusal_seen", {})
+            for role, n in stats["calls"].items():
+                model = ctx.roles.get(role, role)
+                c = seen.setdefault(model, [0, 0])
+                c[0] += n
+                c[1] += stats["refusals"].get(role, 0)
+                if c[0] >= int(self.cfg.get("refusal_min_calls", 30)) and c[1] / c[0] > limit:
+                    raise UpstreamRefused(
+                        f"{self.name}: 模型 {model} 对上游框架的提示词拒答了 {c[1]}/{c[0]} 次（流水里 refusal=true 的行）。"
+                        f"分数会全是 0，已中止。换一个不拒答的模型，或把 frameworks_cfg.{self.name}.abort_refusal_rate 调到 1 强行继续。")
 
     def freeze(self, ctx: Ctx, kind: str, path: Path) -> Artifact:
         return ctx.store.put_dir(kind, path)
@@ -80,24 +196,33 @@ class ExternalRepoAdapter(FrameworkAdapter):
         self._not_wired("candidates")
 
 
-@register
-class GodelAgent(ExternalRepoAdapter):
-    name = "godel_agent"
-    level = "L2"
-    repo_url = "https://github.com/Arvid-pku/Godel_Agent"
-    upstream_api = "https://api.openai.com"
-    todo = ("改进器 = agent 运行时可改写的自身逻辑（需要把运行时状态落盘成目录才能冻结，这是导出难度“中”的原因）；"
-            "执行者 = 当前的任务求解函数；modify_improver=False 时禁止它改写自改进相关的函数。")
+#: 上游子进程出错时 solve() 返回的输出以它开头，评分为 0；演化时适配器据此把错误反馈给改进器。
+ERROR_PREFIX = "[upstream-error] "
 
 
-@register
-class ADAS(ExternalRepoAdapter):
-    name = "adas"
-    level = "L1"
-    repo_url = "https://github.com/ShengranHu/ADAS"
-    upstream_api = "https://api.openai.com"
-    todo = ("改进器 = 固定的元 agent 提示词（不变）；执行者 = 存档里的 forward 函数代码；"
-            "存档 = 上游的 archive json。一轮 step = 元 agent 生成一个新 agent 并在搜索集上评测入档。")
+class DriverAdapter(ExternalRepoAdapter):
+    """用驱动脚本接入的上游框架的公共部分：答题、评分、取候选。"""
+
+    driver = ""
+
+    def candidates(self, state, k):
+        entries = sorted(state.archive.load_json()["entries"], key=lambda e: -e["search_score"])
+        seen, out = set(), []
+        for e in entries:
+            if e["executor"]["digest"] not in seen:
+                seen.add(e["executor"]["digest"])
+                out.append(Artifact.from_dict(e["executor"]))
+        return out[:k]
+
+    def run_task(self, executor, bench, task, ctx, sample) -> TaskResult:
+        out = self.solve(executor, bench, task, ctx, sample)
+        return TaskResult(out, 0.0 if out.startswith(ERROR_PREFIX) else bench.score(task, out))
+
+    @staticmethod
+    def as_output(res: dict) -> str:
+        if "answer" in res:
+            return f"ANSWER: {res['answer']}"
+        return ERROR_PREFIX + str(res.get("error", "no answer"))[-2000:]
 
 
 @register

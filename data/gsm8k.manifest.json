@@ -1,0 +1,12 @@
+{
+ "benchmark": "gsm8k",
+ "rows": 1319,
+ "jsonl_sha256": "61da7daa12623c58c7b791dec11837810562931dcfc039d7f55c15edf8eceef8",
+ "source": {
+  "repo": "https://github.com/ShengranHu/ADAS",
+  "commit": "2702bee8fefda42255efc5be9f60e3bd3db96ae4",
+  "files": {
+   "dataset/GSM8k_test.jsonl": "3730d312f6e3440559ace48831e51066acaca737f6eabec99bccb9e4b3c39d14"
+  }
+ }
+}

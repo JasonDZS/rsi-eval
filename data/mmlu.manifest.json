@@ -1,0 +1,12 @@
+{
+ "benchmark": "mmlu",
+ "rows": 14042,
+ "jsonl_sha256": "f3fd872faca15baf7b1b3154d27ed417eb8ac0d79c4da98ff18b8153c6cf942b",
+ "source": {
+  "repo": "https://github.com/ShengranHu/ADAS",
+  "commit": "2702bee8fefda42255efc5be9f60e3bd3db96ae4",
+  "files": {
+   "dataset/mmlu.csv": "15b6785d49e0012602e089558a7a0dfb916baf97e9295aa25b48062f13c6afbb"
+  }
+ }
+}

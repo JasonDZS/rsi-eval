@@ -1,0 +1,12 @@
+{
+ "benchmark": "gsm_hard",
+ "rows": 1319,
+ "jsonl_sha256": "6e0c000b8ed357997606f5e24c4930989975c72f38706fe3c8324fed22f4ed46",
+ "source": {
+  "repo": "https://github.com/ShengranHu/ADAS",
+  "commit": "2702bee8fefda42255efc5be9f60e3bd3db96ae4",
+  "files": {
+   "dataset/gsmhardv2.jsonl": "2032b0188a49ac0ec38cbe1e695e7d62d6dddc44bbb64f920728aca710e9ddef"
+  }
+ }
+}
