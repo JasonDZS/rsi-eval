@@ -26,13 +26,18 @@ models:
 
   # ---- 其他厂商：OpenAI 兼容接口（跑 ADAS / Gödel Agent 用；Claude 5.5 会拒答这两个框架的提示词）----
   # 地址和密钥都读环境变量：RSI_EVAL_OTHER_BASE_URL（形如 https://host:port/v1）、RSI_EVAL_OTHER_KEY。
-  # 价格还没填（0 表示未知）：预算按 token 对齐不受影响，但美元数和 hard_cap_usd 对这些模型不起作用，开跑前请填上。
+  # 价格（美元 / 百万 token）是各厂商官网的标价，2026-11-25 查的；中转商实际怎么扣费没有公开页面，所以账本里的美元数是估算，
+  # 以中转商后台的实际扣费为准。缓存命中的折扣没有计入（按未命中算，偏高）。
+  #   DeepSeek-V4.1-Flash-1017：api-docs.deepseek.com/quick_start/pricing，取高峰价（低谷价是一半）
+  #   gpt-6.2-sol：developers.openai.com/api/docs/pricing 的 Standard 档
+  #   GLM-5.3-Flash：openrouter.ai/z-ai/glm-5.3-flash 上 Z.ai 直连的标价
+  #   gpt-5.6-luna：OpenAI 价格页上没有这个型号，仍是 0（未知）；用到配置 C 之前要补上
   deepseek-v4.1-flash:
     provider: openai_compat
     model: DeepSeek-V4.1-Flash-1017
     base_url_env: RSI_EVAL_OTHER_BASE_URL
     api_key_env: RSI_EVAL_OTHER_KEY
-    price: {input: 0.0, output: 0.0}
+    price: {input: 0.3, output: 1.2}
     max_tokens: 16000
     override_max_tokens: true   # 推理型模型：推理也算在输出上限里，上游写死的 4096 不够用
   glm-5.3-flash:
@@ -40,14 +45,14 @@ models:
     model: GLM-5.3-Flash
     base_url_env: RSI_EVAL_OTHER_BASE_URL
     api_key_env: RSI_EVAL_OTHER_KEY
-    price: {input: 0.0, output: 0.0}
+    price: {input: 0.15, output: 0.5}
     max_tokens: 4096
   gpt-6.2-sol:
     provider: openai_compat
     model: gpt-6.2-sol
     base_url_env: RSI_EVAL_OTHER_BASE_URL
     api_key_env: RSI_EVAL_OTHER_KEY
-    price: {input: 0.0, output: 0.0}
+    price: {input: 2.0, output: 10.0}
     max_tokens: 8192
   gpt-5.6-luna:
     provider: openai_compat
