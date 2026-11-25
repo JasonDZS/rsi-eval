@@ -61,6 +61,15 @@ models:
     api_key_env: RSI_EVAL_OTHER_KEY
     price: {input: 0.0, output: 0.0}
     max_tokens: 8192
+  # 价格取 openrouter.ai/qwen/qwen3.8-27B 上 Alibaba Cloud Int. 的标价（2026-11-25 查；别家从 0.035 / 1.5 起），同样是估算。
+  # 型号名是用户给的写法，中转商那边是否就叫这个名字还没实测。
+  qwen3.8-27b:
+    provider: openai_compat
+    model: Qwen/Qwen3.8-27B
+    base_url_env: RSI_EVAL_OTHER_BASE_URL
+    api_key_env: RSI_EVAL_OTHER_KEY
+    price: {input: 0.425, output: 2.55}
+    max_tokens: 8192
 
 # 角色：executor 执行模型，improver 改进侧模型，transfer 只用于 E5 的迁移测试模型（演化期间不出现）
 model_configs:
@@ -72,6 +81,8 @@ model_configs:
   C: {executor: deepseek-v4.1-flash, improver: gpt-5.6-luna, transfer: glm-5.3-flash}
   # 配置 D：执行用 gpt-6.2-sol，改进用 DeepSeek
   D: {executor: gpt-6.2-sol, improver: deepseek-v4.1-flash, transfer: glm-5.3-flash}
+  # 配置 E：执行用 Qwen3.8-27B（弱一档、给基准留提升空间），改进用 gpt-6.2-sol
+  E: {executor: qwen3.8-27b, improver: gpt-6.2-sol, transfer: glm-5.3-flash}
   # 离线
   mockA: {executor: mock-weak, improver: mock-strong, transfer: mock-other}
   mockB: {executor: mock-strong, improver: mock-strong, transfer: mock-other}
