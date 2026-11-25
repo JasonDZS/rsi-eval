@@ -70,6 +70,7 @@ models:
     api_key_env: RSI_EVAL_OTHER_KEY
     price: {input: 0.425, output: 2.55}
     max_tokens: 8192
+    timeout: 120                # 这条线路偶尔有请求一直不回：120 秒没读到就重试
 
 # 角色：executor 执行模型，improver 改进侧模型，transfer 只用于 E5 的迁移测试模型（演化期间不出现）
 model_configs:

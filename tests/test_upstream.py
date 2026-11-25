@@ -317,7 +317,7 @@ def test_other_vendor_models_are_forwarded_to_their_endpoint(settings, monkeypat
     monkeypatch.setenv("OTHER_KEY", "ok")
     px = MeteringProxy(make_root_ctx(settings, "mockA"), "https://api.openai.com")
     sent = []
-    px._post = lambda url, body, headers, tries=5: (sent.append((url, body, headers)), (200, b"{}", "application/json"))[1]
+    px._post = lambda url, body, headers, tries=5, **kw: (sent.append((url, body, headers)), (200, b"{}", "application/json"))[1]
     try:
         px.forward("/v1/chat/completions", b"", {"model": "other-1", "temperature": 0.5, "stop": None, "messages": []}, {}, "executor")
         assert "OTHER_KEY" in px.secret_env_names()
@@ -331,7 +331,7 @@ def test_model_spec_can_override_the_callers_token_limit(settings, monkeypatch):
     settings.models["mock-weak"] = {"provider": "openai_compat", "model": "r-1", "base_url": "https://llm.example/v1", "max_tokens": 16000, "override_max_tokens": True}
     px = MeteringProxy(make_root_ctx(settings, "mockA"), "https://api.openai.com")
     sent = []
-    px._post = lambda url, body, headers, tries=5: (sent.append(body), (200, b"{}", "application/json"))[1]
+    px._post = lambda url, body, headers, tries=5, **kw: (sent.append(body), (200, b"{}", "application/json"))[1]
     try:
         px.forward("/v1/chat/completions", b"", {"model": "r-1", "max_tokens": 4096, "messages": []}, {}, "executor")
     finally:

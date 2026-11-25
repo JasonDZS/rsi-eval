@@ -208,7 +208,11 @@ class MeteringProxy:
                 req["max_tokens"] = int(cap)
             url = base + (path[len("/v1"):] if base.endswith("/v1") and path.startswith("/v1/") else path)
             key = os.environ.get(spec.get("api_key_env", "OPENAI_API_KEY"), "")
-            return self._post(url, {k: v for k, v in req.items() if v is not None}, {"content-type": "application/json", "authorization": "Bearer " + key})
+            # extra_body：这个模型每次请求都要带的参数（比如关掉思考模式）。timeout：单次请求的读超时，到了就重试，
+            # 用来对付偶尔一直不回的线路。
+            body = {**{k: v for k, v in req.items() if v is not None}, **(spec.get("extra_body") or {})}
+            return self._post(url, body, {"content-type": "application/json", "authorization": "Bearer " + key},
+                              timeout=float(spec.get("timeout", 900)))
         h = {k: v for k, v in headers.items() if k.lower() in ("content-type", "anthropic-version", "anthropic-beta", "accept")}
         key = anthropic_key(self._spec(role))
         if "/messages" in path and key:
@@ -223,12 +227,12 @@ class MeteringProxy:
             return e.code, e.read(), e.headers.get("content-type", "application/json")
 
     # ---- OpenAI 格式 -> Claude ----
-    def _post(self, url: str, body: dict, headers: dict, tries: int = 5):
+    def _post(self, url: str, body: dict, headers: dict, tries: int = 5, timeout: float = 900):
         data = json.dumps(body).encode()
         for i in range(tries):
             r = urllib.request.Request(url, data=data, headers=headers, method="POST")
             try:
-                with urllib.request.urlopen(r, timeout=900) as resp:
+                with urllib.request.urlopen(r, timeout=timeout) as resp:
                     return resp.status, resp.read(), resp.headers.get("content-type", "application/json")
             except urllib.error.HTTPError as e:
                 out = e.code, e.read(), e.headers.get("content-type", "application/json")
