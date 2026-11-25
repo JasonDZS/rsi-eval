@@ -1,0 +1,14 @@
+# 试点（最小档）：Gödel Agent（被测）+ ADAS（对照），问答基准，配置 A。
+# 上游两个框架的适配器接好之前，可以先把 frameworks 换成 [ref_l2, ref_l1] 用真实模型试跑协议。
+name: pilot
+tier: minimal
+model_config: A
+hard_cap_usd: 50            # 真实花费硬上限，到了立即中止；按批准的预算改
+require_frozen_protocol: true
+max_workers: 8
+groups:
+  - frameworks: [godel_agent, adas]
+    evolve_benchmarks: [drop, mgsm, mmlu, gpqa]
+    unseen_benchmarks: [gsm8k, gsm_hard]
+    experiments: [E1, E2, E3, E4, E5, E6, E7, E8]
+e7_control: {godel_agent: adas}

@@ -1,0 +1,41 @@
+# 评测协议。开跑前写死：确认后运行 `rsi-eval protocol freeze`，之后的结果都带着这份文件的哈希。
+
+budget_unit: tokens        # 预算按 token 对齐（输入 + 输出）；也可改成 usd
+select_top_k: 3            # 演化结束后，存档里搜索集分数最好的 k 个候选进选择集
+gain_curve: true           # 记录增益随预算变化的曲线
+ci_method: t               # t：t 分布区间（小样本推荐）；bootstrap：自助法
+max_workers: 8             # 评测并发
+
+# ---- 判定标准（对应实验计划“判定标准”一节，全部是 95% 置信区间下界 > 0）----
+criteria:
+  L1: 报告集上，自改进系统 − 同预算重复采样
+  L2: 未见基准上的增益，且换执行模型后的增益
+  L3: 最终代 − 第 0 代；最终代 − 三个对照（重复采样、只累积经验、演化成本入账）
+  recursion: 第三层通过，且相邻代增益斜率 > 0
+
+# ---- 数据切分：每个基准切成 搜索 / 选择 / 报告 三份，切分只由 split_seed 和题目 id 决定 ----
+split_defaults:
+  split_seed: 0
+  fractions: {search: 0.3, select: 0.2, report: 0.5}
+benchmarks:
+  # 试点：演化用
+  drop:  {sizes: {search: 128, select: 128, report: 800}}
+  mgsm:  {sizes: {search: 128, select: 128, report: 800}}
+  mmlu:  {sizes: {search: 128, select: 128, report: 800}}
+  gpqa:  {sizes: {search: 64,  select: 64,  report: 320}}
+  # 试点：未见任务（改进运行也在这上面做，所以同样切三份）
+  gsm8k:    {sizes: {search: 128, select: 128, report: 800}}
+  gsm_hard: {sizes: {search: 128, select: 128, report: 800}}
+  # 主实验
+  polyglot:          {fractions: {search: 0.3, select: 0.2, report: 0.5}}
+  swebench_verified: {fractions: {search: 0.3, select: 0.2, report: 0.5}, instance_ids: []}   # 子集的 instance_id 在这里固定
+  livecodebench:     {fractions: {search: 0.3, select: 0.2, report: 0.5}, since: "2025-01-01", timeout: 10}
+  # 离线
+  mock_arith:        {sizes: {search: 60, select: 60, report: 200}}
+  mock_arith_unseen: {sizes: {search: 60, select: 60, report: 200}}
+
+# ---- 预算档位（按运行次数；套件里的 params 可以覆盖）----
+tiers:
+  minimal:  {repeats: 3, rounds: 10, generations: [first, mid, last], restarts: 3, improve_budget_tokens: auto, meta_budget_tokens: auto, max_resamples: 16}
+  standard: {repeats: 5, rounds: 10, generations: [first, mid, last], restarts: 3, improve_budget_tokens: auto, meta_budget_tokens: auto, max_resamples: 16}
+  full:     {repeats: 5, rounds: 10, generations: [first, mid, last], restarts: 3, improve_budget_tokens: auto, meta_budget_tokens: auto, max_resamples: 16, adjacent_stride: 1}

@@ -1,0 +1,43 @@
+# 模型定义与角色配置。型号必须写固定版本；price 单位是美元 / 百万 token，用于把 token 换算成金额。
+models:
+  # ---- 离线假模型（冒烟测试用，不花钱）----
+  mock-weak:   {provider: mock, skill: 0.35}
+  mock-strong: {provider: mock, skill: 0.60}
+  mock-other:  {provider: mock, skill: 0.45, seed: 7}
+
+  # ---- Anthropic（凭据从环境读取，例如 ANTHROPIC_API_KEY）----
+  # 价格取自 2026-11 的公开报价，开跑前请核对。
+  claude-haiku-5-5:
+    provider: anthropic
+    model: claude-haiku-5-5
+    price: {input: 0.10, output: 0.50}
+    max_tokens: 4096
+    params: {output_config: {effort: low}}
+  claude-sonnet-5-5:
+    provider: anthropic
+    model: claude-sonnet-5-5
+    price: {input: 2.00, output: 10.00}
+    max_tokens: 8192
+  claude-opus-5-5:
+    provider: anthropic
+    model: claude-opus-5-5
+    price: {input: 4.00, output: 20.00}
+    max_tokens: 16000
+
+  # ---- 其他厂商：OpenAI 兼容接口。迁移测试模型建议用不同厂商或不同规模的模型，填好后启用。----
+  # other-vendor-model:
+  #   provider: openai_compat
+  #   model: <固定版本的型号>
+  #   base_url: https://...
+  #   api_key_env: OTHER_API_KEY
+  #   price: {input: 0.0, output: 0.0}
+
+# 角色：executor 执行模型，improver 改进侧模型，transfer 只用于 E5 的迁移测试模型（演化期间不出现）
+model_configs:
+  # 配置 A（默认）：强改进侧 + 较弱执行模型
+  A: {executor: claude-haiku-5-5, improver: claude-opus-5-5, transfer: claude-sonnet-5-5}
+  # 配置 B：执行和改进用同一个模型，严格意义上的“自己改自己”
+  B: {executor: claude-sonnet-5-5, improver: claude-sonnet-5-5, transfer: claude-haiku-5-5}
+  # 离线
+  mockA: {executor: mock-weak, improver: mock-strong, transfer: mock-other}
+  mockB: {executor: mock-strong, improver: mock-strong, transfer: mock-other}
