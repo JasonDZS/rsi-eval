@@ -5,3 +5,4 @@ runs/
 data/*.jsonl
 vendor/
 .env
+.venv/

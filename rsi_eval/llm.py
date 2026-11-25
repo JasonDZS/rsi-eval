@@ -123,7 +123,7 @@ class OpenAICompatClient(LLMClient):
         import openai
 
         self._client = openai.OpenAI(
-            base_url=spec.get("base_url"),
+            base_url=spec.get("base_url") or os.environ.get(spec.get("base_url_env") or "") or None,
             api_key=os.environ.get(spec.get("api_key_env", "OPENAI_API_KEY")),
             max_retries=int(spec.get("max_retries", 4)),
         )

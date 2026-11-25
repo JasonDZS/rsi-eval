@@ -24,13 +24,30 @@ models:
     price: {input: 4.00, output: 20.00}
     max_tokens: 16000
 
-  # ---- 其他厂商：OpenAI 兼容接口。迁移测试模型建议用不同厂商或不同规模的模型，填好后启用。----
-  # other-vendor-model:
-  #   provider: openai_compat
-  #   model: <固定版本的型号>
-  #   base_url: https://...
-  #   api_key_env: OTHER_API_KEY
-  #   price: {input: 0.0, output: 0.0}
+  # ---- 其他厂商：OpenAI 兼容接口（跑 ADAS / Gödel Agent 用；Claude 5.5 会拒答这两个框架的提示词）----
+  # 地址和密钥都读环境变量：RSI_EVAL_OTHER_BASE_URL（形如 https://host:port/v1）、RSI_EVAL_OTHER_KEY。
+  # 价格还没填（0 表示未知）：预算按 token 对齐不受影响，但美元数和 hard_cap_usd 对这些模型不起作用，开跑前请填上。
+  deepseek-v4.1-flash:
+    provider: openai_compat
+    model: DeepSeek-V4.1-Flash-1017
+    base_url_env: RSI_EVAL_OTHER_BASE_URL
+    api_key_env: RSI_EVAL_OTHER_KEY
+    price: {input: 0.0, output: 0.0}
+    max_tokens: 4096
+  glm-5.3-flash:
+    provider: openai_compat
+    model: GLM-5.3-Flash
+    base_url_env: RSI_EVAL_OTHER_BASE_URL
+    api_key_env: RSI_EVAL_OTHER_KEY
+    price: {input: 0.0, output: 0.0}
+    max_tokens: 4096
+  gpt-5.6-luna:
+    provider: openai_compat
+    model: gpt-5.6-luna
+    base_url_env: RSI_EVAL_OTHER_BASE_URL
+    api_key_env: RSI_EVAL_OTHER_KEY
+    price: {input: 0.0, output: 0.0}
+    max_tokens: 8192
 
 # 角色：executor 执行模型，improver 改进侧模型，transfer 只用于 E5 的迁移测试模型（演化期间不出现）
 model_configs:
@@ -38,6 +55,8 @@ model_configs:
   A: {executor: claude-haiku-5-5, improver: claude-opus-5-5, transfer: claude-sonnet-5-5}
   # 配置 B：执行和改进用同一个模型，严格意义上的“自己改自己”
   B: {executor: claude-sonnet-5-5, improver: claude-sonnet-5-5, transfer: claude-haiku-5-5}
+  # 配置 C：其他厂商的模型，给 ADAS / Gödel Agent 用。型号是初步选择，待确认
+  C: {executor: deepseek-v4.1-flash, improver: gpt-5.6-luna, transfer: glm-5.3-flash}
   # 离线
   mockA: {executor: mock-weak, improver: mock-strong, transfer: mock-other}
   mockB: {executor: mock-strong, improver: mock-strong, transfer: mock-other}
