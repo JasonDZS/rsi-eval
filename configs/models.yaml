@@ -5,7 +5,7 @@ models:
   mock-strong: {provider: mock, skill: 0.60}
   mock-other:  {provider: mock, skill: 0.45, seed: 7}
 
-  # ---- Anthropic（凭据从环境读取，例如 ANTHROPIC_API_KEY）----
+  # ---- Anthropic（密钥读环境变量 RSI_EVAL_ANTHROPIC_KEY；可在单个模型上用 api_key_env 改）----
   # 价格取自 2026-11 的公开报价，开跑前请核对。
   claude-haiku-5-5:
     provider: anthropic

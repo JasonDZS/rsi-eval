@@ -62,9 +62,19 @@ def make_client(name: str, models: dict) -> LLMClient:
 # --------------------------------------------------------------------------
 # Anthropic
 # --------------------------------------------------------------------------
+DEFAULT_ANTHROPIC_KEY_ENV = "RSI_EVAL_ANTHROPIC_KEY"
+ANTHROPIC_API_URL = "https://api.anthropic.com"
+
+
+def anthropic_key(spec: dict | None = None) -> str | None:
+    """spec.api_key_env 指定的变量优先，其次 RSI_EVAL_ANTHROPIC_KEY，最后 ANTHROPIC_API_KEY。"""
+    names = [(spec or {}).get("api_key_env"), DEFAULT_ANTHROPIC_KEY_ENV, "ANTHROPIC_API_KEY"]
+    return next((os.environ[n] for n in names if n and os.environ.get(n)), None)
+
+
 @register_provider("anthropic")
 class AnthropicClient(LLMClient):
-    """用官方 SDK。凭据从环境解析（ANTHROPIC_API_KEY 等）。
+    """用官方 SDK。密钥从 RSI_EVAL_ANTHROPIC_KEY 读取（可用 spec.api_key_env 改）。
 
     不传 temperature（新模型会拒绝）；多次采样靠模型自身的随机性。
     不启用模型回退：实验要求同一组对比内模型版本固定。
@@ -76,7 +86,13 @@ class AnthropicClient(LLMClient):
         import anthropic  # 延迟导入：离线跑 mock 不需要装
 
         self._anthropic = anthropic
-        self._client = anthropic.Anthropic(max_retries=int(spec.get("max_retries", 4)))
+        # 实验专用密钥：默认读 RSI_EVAL_ANTHROPIC_KEY（部分托管环境保留了 ANTHROPIC_API_KEY，
+        # 并把 ANTHROPIC_BASE_URL 指向自己的网关，所以这里显式给出密钥和地址，不走 SDK 的环境解析）。
+        key = anthropic_key(spec)
+        if not key:
+            raise RuntimeError(f"model '{name}': 没有找到密钥，请设置环境变量 {spec.get('api_key_env', DEFAULT_ANTHROPIC_KEY_ENV)}")
+        self._client = anthropic.Anthropic(api_key=key, base_url=spec.get("base_url", ANTHROPIC_API_URL),
+                                           max_retries=int(spec.get("max_retries", 4)))
 
     def complete(self, prompt, *, system=None, max_tokens=4096, sample=0):
         kwargs = dict(self.spec.get("params", {}))

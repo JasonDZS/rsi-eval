@@ -117,3 +117,73 @@ def test_stats():
     assert lo < 2.0 < hi
     assert signflip_p([1, 1, 1, 1, 1]) == pytest.approx(1 / 32)
     assert slope([0, 1, 2, 3]) == pytest.approx(1.0)
+
+
+def test_anthropic_key_env_order(monkeypatch):
+    from rsi_eval.llm import anthropic_key
+
+    for k in ("RSI_EVAL_ANTHROPIC_KEY", "ANTHROPIC_API_KEY", "MY_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    assert anthropic_key() is None
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "c")
+    assert anthropic_key() == "c"
+    monkeypatch.setenv("RSI_EVAL_ANTHROPIC_KEY", "b")
+    assert anthropic_key() == "b"
+    monkeypatch.setenv("MY_KEY", "a")
+    assert anthropic_key({"api_key_env": "MY_KEY"}) == "a"
+
+
+def test_proxy_child_env_has_no_real_keys(settings, monkeypatch):
+    settings.models["mock-weak"]["api_key_env"] = "MY_KEY"
+    for k in ("RSI_EVAL_ANTHROPIC_KEY", "RSI_EVAL_UPSTREAM_KEY", "MY_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+        monkeypatch.setenv(k, "real-secret")
+    monkeypatch.setenv("KEEP_ME", "1")
+    px = MeteringProxy(make_root_ctx(settings, "mockA"), "mock")
+    try:
+        env = px.child_env(extra={"EXTRA": "x"})
+    finally:
+        px.server.server_close()
+    assert "real-secret" not in env.values()
+    assert env["ANTHROPIC_API_KEY"] == env["OPENAI_API_KEY"] == "rsi-eval-proxy"
+    assert env["ANTHROPIC_BASE_URL"] == px.url and env["KEEP_ME"] == "1" and env["EXTRA"] == "x"
+
+
+def test_proxy_forwards_with_model_specific_key(settings, monkeypatch):
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    import threading
+
+    seen = {}
+
+    class Upstream(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("content-length", 0)))
+            seen.update({k.lower(): v for k, v in self.headers.items()})
+            body = json.dumps({"content": [{"type": "text", "text": "ok"}], "usage": {"input_tokens": 3, "output_tokens": 1}}).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    up = HTTPServer(("127.0.0.1", 0), Upstream)
+    threading.Thread(target=up.serve_forever, daemon=True).start()
+    for k in ("RSI_EVAL_ANTHROPIC_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("MY_KEY", "custom-key")
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
+    settings.models["mock-weak"]["api_key_env"] = "MY_KEY"  # mockA 的 executor
+    ctx = make_root_ctx(settings, "mockA")
+    try:
+        with MeteringProxy(ctx, f"http://127.0.0.1:{up.server_address[1]}") as px:
+            req = urllib.request.Request(px.url + "/v1/messages", data=json.dumps({"model": "mock-weak", "messages": []}).encode(),
+                                         headers={"content-type": "application/json", "x-api-key": "rsi-eval-proxy"})
+            assert json.loads(urllib.request.urlopen(req).read())["content"][0]["text"] == "ok"
+    finally:
+        up.shutdown()
+        up.server_close()
+    assert seen.get("x-api-key") == "custom-key" and "authorization" not in seen
+    assert ctx.meter.totals().tokens == 4
