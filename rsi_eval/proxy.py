@@ -200,8 +200,12 @@ class MeteringProxy:
             # 其他厂商的 OpenAI 兼容接口：按模型定义里的地址（base_url，或 base_url_env 指的环境变量）和密钥转发
             base = base.rstrip("/")
             cap = spec.get("max_tokens")
-            if cap and not (req.get("max_tokens") or req.get("max_completion_tokens")):
-                req = {**req, "max_tokens": int(cap)}  # 上游不设上限时用模型定义里的，推理型模型否则容易在出结果前被截断
+            asked = req.get("max_tokens") or req.get("max_completion_tokens")
+            # 上游不设上限时用模型定义里的。override_max_tokens: true 时总是用模型定义里的：
+            # 上游写死的上限（ADAS 是 4096）是按“输出全是可见内容”的模型定的，推理型模型会在出结果前把它用完。
+            if cap and (not asked or spec.get("override_max_tokens")):
+                req = {k: v for k, v in req.items() if k != "max_completion_tokens"}
+                req["max_tokens"] = int(cap)
             url = base + (path[len("/v1"):] if base.endswith("/v1") and path.startswith("/v1/") else path)
             key = os.environ.get(spec.get("api_key_env", "OPENAI_API_KEY"), "")
             return self._post(url, {k: v for k, v in req.items() if v is not None}, {"content-type": "application/json", "authorization": "Bearer " + key})

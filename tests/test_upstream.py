@@ -325,3 +325,15 @@ def test_other_vendor_models_are_forwarded_to_their_endpoint(settings, monkeypat
         px.server.server_close()
     assert sent == [("https://llm.example/v1/chat/completions", {"model": "other-1", "temperature": 0.5, "messages": []},
                      {"content-type": "application/json", "authorization": "Bearer ok"})]
+
+
+def test_model_spec_can_override_the_callers_token_limit(settings, monkeypatch):
+    settings.models["mock-weak"] = {"provider": "openai_compat", "model": "r-1", "base_url": "https://llm.example/v1", "max_tokens": 16000, "override_max_tokens": True}
+    px = MeteringProxy(make_root_ctx(settings, "mockA"), "https://api.openai.com")
+    sent = []
+    px._post = lambda url, body, headers, tries=5: (sent.append(body), (200, b"{}", "application/json"))[1]
+    try:
+        px.forward("/v1/chat/completions", b"", {"model": "r-1", "max_tokens": 4096, "messages": []}, {}, "executor")
+    finally:
+        px.server.server_close()
+    assert sent[0]["max_tokens"] == 16000
