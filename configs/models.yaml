@@ -80,11 +80,14 @@ models:
     base_url_env: RSI_EVAL_OTHER_BASE_URL
     api_key_env: RSI_EVAL_OTHER_KEY
     price: {input: 0.03, output: 0.15}
-    max_tokens: 8192
+    max_tokens: 2048
+    override_max_tokens: true   # 小模型偶尔会一直写下去：统一封顶，不用上游给的 4096
     stream_upstream: true
     timeout: 90
-    split_n: true               # 这条线路对 n > 1 返回 400（“n must be 1”）：拆成多次单回复请求
-    extra_body: {enable_thinking: false}   # 默认思考模式下一道算术题要想两千多个 token，常常把上限用完还没给答案
+    split_n: true               # 这条线路有时对 n > 1 返回 400（“n must be 1”）：拆成多次单回复请求
+    # 默认思考模式下一道算术题要想两千多个 token，常常把上限用完还没给答案。实测 4B 上只有这种写法能关掉
+    # （27B 上有效的是顶层 enable_thinking: false，正好相反）。
+    extra_body: {chat_template_kwargs: {enable_thinking: false}}
 
 # 角色：executor 执行模型，improver 改进侧模型，transfer 只用于 E5 的迁移测试模型（演化期间不出现）
 model_configs:
