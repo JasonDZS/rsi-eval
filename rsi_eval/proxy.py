@@ -232,7 +232,8 @@ class MeteringProxy:
         for i in range(tries):
             r = urllib.request.Request(url, data=data, headers=headers, method="POST")
             try:
-                with urllib.request.urlopen(r, timeout=timeout) as resp:
+                # 每次重试把读超时翻倍：短超时用来甩掉挂死的连接，但确实要生成很久的请求不能永远被它打断
+                with urllib.request.urlopen(r, timeout=min(900, timeout * 2 ** i)) as resp:
                     return resp.status, resp.read(), resp.headers.get("content-type", "application/json")
             except urllib.error.HTTPError as e:
                 out = e.code, e.read(), e.headers.get("content-type", "application/json")
