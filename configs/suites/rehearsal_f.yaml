@@ -1,0 +1,16 @@
+# 彩排：配置 F（Qwen3.5-4B 执行 + gpt-6.2-sol 改进），只为量出真实的 token 数和耗时，结果不计入正式结论。
+# 题量在这里缩小了，所以协议哈希和 protocol.lock 对不上，不能也不该当作正式运行。
+name: rehearsal_f
+tier: minimal
+model_config: F
+hard_cap_usd: 40
+require_frozen_protocol: false
+max_workers: 8
+params: {repeats: 1, rounds: 3}
+benchmark_overrides:
+  mgsm: {sizes: {search: 24, select: 24, report: 80}}
+groups:
+  - frameworks: [godel_agent, adas]
+    evolve_benchmarks: [mgsm]
+    unseen_benchmarks: []
+    experiments: [E1, E2]

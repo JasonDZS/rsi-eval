@@ -72,6 +72,16 @@ models:
     max_tokens: 8192
     stream_upstream: true       # 向上游要流式输出再拼回来：timeout 变成“多久没收到新内容”，挂死的连接很快重试
     timeout: 90
+  # 价格取 pricepertoken.com 上的标价（非思考版，只有这一处来源），估算。
+  qwen3.5-4b:
+    provider: openai_compat
+    model: Qwen/Qwen3.5-4B
+    base_url_env: RSI_EVAL_OTHER_BASE_URL
+    api_key_env: RSI_EVAL_OTHER_KEY
+    price: {input: 0.03, output: 0.15}
+    max_tokens: 8192
+    stream_upstream: true
+    timeout: 90
 
 # 角色：executor 执行模型，improver 改进侧模型，transfer 只用于 E5 的迁移测试模型（演化期间不出现）
 model_configs:
@@ -85,6 +95,8 @@ model_configs:
   D: {executor: gpt-6.2-sol, improver: deepseek-v4.1-flash, transfer: glm-5.3-flash}
   # 配置 E：执行用 Qwen3.8-27B（弱一档、给基准留提升空间），改进用 gpt-6.2-sol
   E: {executor: qwen3.8-27b, improver: gpt-6.2-sol, transfer: glm-5.3-flash}
+  # 配置 F：执行用 Qwen3.5-4B（小模型，接近论文里 GPT-3.5 的起点），改进用 gpt-6.2-sol
+  F: {executor: qwen3.5-4b, improver: gpt-6.2-sol, transfer: glm-5.3-flash}
   # 离线
   mockA: {executor: mock-weak, improver: mock-strong, transfer: mock-other}
   mockB: {executor: mock-strong, improver: mock-strong, transfer: mock-other}
