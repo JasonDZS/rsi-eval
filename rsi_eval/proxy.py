@@ -111,6 +111,57 @@ ROLE_PREFIX = re.compile(r"^/_role/([A-Za-z_]+)(/.*)$")
 RETRY_STATUS = (429, 500, 502, 503, 529)
 
 
+def _collect_stream(resp) -> dict:
+    """把 OpenAI 格式的流式响应（SSE）拼成一个普通的 chat.completion 响应。"""
+    out: dict = {"object": "chat.completion", "choices": [], "usage": None}
+    choices: dict[int, dict] = {}
+    done = False
+    for raw in resp:
+        line = raw.decode("utf-8", "replace").strip()
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if data == "[DONE]":
+            done = True
+            break
+        try:
+            ev = json.loads(data)
+        except ValueError:
+            continue
+        if ev.get("error"):
+            raise ConnectionError(f"upstream stream error: {ev['error']}")
+        for k in ("id", "model", "created", "system_fingerprint"):
+            if ev.get(k) is not None:
+                out.setdefault(k, ev[k])
+        if ev.get("usage"):
+            out["usage"] = ev["usage"]
+        for ch in ev.get("choices") or []:
+            c = choices.setdefault(ch.get("index", 0), {"index": ch.get("index", 0), "finish_reason": None,
+                                                        "message": {"role": "assistant", "content": None}, "_tools": {}})
+            d = ch.get("delta") or {}
+            for k in ("content", "reasoning_content", "reasoning", "refusal"):
+                if d.get(k):
+                    c["message"][k] = (c["message"].get(k) or "") + d[k]
+            for tc in d.get("tool_calls") or []:
+                t = c["_tools"].setdefault(tc.get("index", 0), {"id": None, "type": "function", "function": {"name": "", "arguments": ""}})
+                t["id"] = tc.get("id") or t["id"]
+                f = tc.get("function") or {}
+                t["function"]["name"] += f.get("name") or ""
+                t["function"]["arguments"] += f.get("arguments") or ""
+            if ch.get("finish_reason"):
+                c["finish_reason"] = ch["finish_reason"]
+                done = True
+    if not done:  # 连接中途断了：当作失败，让外层重试
+        raise ConnectionError("upstream stream ended before a finish_reason")
+    for i in sorted(choices):
+        c = choices[i]
+        tools = c.pop("_tools")
+        if tools:
+            c["message"]["tool_calls"] = [tools[k] for k in sorted(tools)]
+        out["choices"].append(c)
+    return out
+
+
 class MeteringProxy:
     """用法：
         with MeteringProxy(ctx, upstream="https://api.anthropic.com") as px:
@@ -212,7 +263,7 @@ class MeteringProxy:
             # 用来对付偶尔一直不回的线路。
             body = {**{k: v for k, v in req.items() if v is not None}, **(spec.get("extra_body") or {})}
             return self._post(url, body, {"content-type": "application/json", "authorization": "Bearer " + key},
-                              timeout=float(spec.get("timeout", 900)))
+                              timeout=float(spec.get("timeout", 900)), stream=bool(spec.get("stream_upstream")) and not req.get("stream"))
         h = {k: v for k, v in headers.items() if k.lower() in ("content-type", "anthropic-version", "anthropic-beta", "accept")}
         key = anthropic_key(self._spec(role))
         if "/messages" in path and key:
@@ -227,13 +278,18 @@ class MeteringProxy:
             return e.code, e.read(), e.headers.get("content-type", "application/json")
 
     # ---- OpenAI 格式 -> Claude ----
-    def _post(self, url: str, body: dict, headers: dict, tries: int = 5, timeout: float = 900):
+    def _post(self, url: str, body: dict, headers: dict, tries: int = 5, timeout: float = 900, stream: bool = False):
+        """stream=True：向上游要流式输出、在这里拼回普通响应。这样 timeout 管的是“多久没收到新内容”，
+        挂死的连接很快就被甩掉重试，而确实要生成很久的请求只要一直在出字就不会被打断。"""
+        if stream:
+            body = {**body, "stream": True, "stream_options": {"include_usage": True}}
         data = json.dumps(body).encode()
         for i in range(tries):
             r = urllib.request.Request(url, data=data, headers=headers, method="POST")
             try:
-                # 每次重试把读超时翻倍：短超时用来甩掉挂死的连接，但确实要生成很久的请求不能永远被它打断
-                with urllib.request.urlopen(r, timeout=min(900, timeout * 2 ** i)) as resp:
+                with urllib.request.urlopen(r, timeout=timeout) as resp:
+                    if stream:
+                        return 200, json.dumps(_collect_stream(resp)).encode(), "application/json"
                     return resp.status, resp.read(), resp.headers.get("content-type", "application/json")
             except urllib.error.HTTPError as e:
                 out = e.code, e.read(), e.headers.get("content-type", "application/json")

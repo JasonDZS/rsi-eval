@@ -9,6 +9,11 @@ from .budget import Usage
 from .core import Artifact, Ctx
 
 
+#: 整道题超时是线路问题（请求挂死），不是执行者答错：重试几次，实在不行才记 0 分
+INFRA_ERROR = "[upstream-error] timeout after"
+INFRA_RETRIES = 2
+
+
 @dataclass
 class EvalResult:
     mean: float
@@ -27,10 +32,14 @@ def _one(adapter, executor: Artifact, bench: Benchmark, task: Task, ctx: Ctx, sa
         ctx.meter.charge(ctx.phase, "executor", model, Usage(hit["input_tokens"], hit["output_tokens"]), hit["usd"], cached=True)
         return hit
     m = ctx.meter.child()
-    r = adapter.run_task(executor, bench, task, ctx.with_(meter=m), sample)
+    for attempt in range(1 + INFRA_RETRIES):
+        r = adapter.run_task(executor, bench, task, ctx.with_(meter=m), sample)
+        if not r.output.startswith(INFRA_ERROR):
+            break
     t = m.totals()
     rec = {"output": r.output, "score": float(r.score), "input_tokens": t.input_tokens, "output_tokens": t.output_tokens, "usd": t.usd}
-    ctx.cache.put(key, rec)
+    if not r.output.startswith(INFRA_ERROR):  # 线路问题不进缓存：续跑时这道题会重新评
+        ctx.cache.put(key, rec)
     return rec
 
 

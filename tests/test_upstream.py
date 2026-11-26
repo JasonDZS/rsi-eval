@@ -337,3 +337,25 @@ def test_model_spec_can_override_the_callers_token_limit(settings, monkeypatch):
     finally:
         px.server.server_close()
     assert sent[0]["max_tokens"] == 16000
+
+
+def test_streamed_upstream_reply_is_reassembled():
+    from rsi_eval.proxy import _collect_stream
+
+    def sse(*events):
+        return [("data: " + (e if isinstance(e, str) else json.dumps(e)) + "\n").encode() for e in events]
+
+    got = _collect_stream(sse(
+        {"id": "x", "model": "m", "choices": [{"index": 0, "delta": {"role": "assistant", "reasoning_content": "hm"}}]},
+        {"choices": [{"index": 0, "delta": {"content": "4"}}]},
+        {"choices": [{"index": 0, "delta": {"content": "2", "tool_calls": [{"index": 0, "id": "c1", "function": {"name": "f", "arguments": "{\"a\""}}]}}]},
+        {"choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "function": {"arguments": ": 1}"}}]}, "finish_reason": "tool_calls"}]},
+        {"choices": [], "usage": {"prompt_tokens": 5, "completion_tokens": 7}},
+        "[DONE]",
+    ))
+    msg = got["choices"][0]["message"]
+    assert (msg["content"], msg["reasoning_content"], got["choices"][0]["finish_reason"]) == ("42", "hm", "tool_calls")
+    assert msg["tool_calls"] == [{"id": "c1", "type": "function", "function": {"name": "f", "arguments": "{\"a\": 1}"}}]
+    assert got["usage"] == {"prompt_tokens": 5, "completion_tokens": 7}
+    with pytest.raises(ConnectionError):  # 流中途断了要当失败重试，不能当成一条空回复
+        _collect_stream(sse({"choices": [{"index": 0, "delta": {"content": "4"}}]}))
