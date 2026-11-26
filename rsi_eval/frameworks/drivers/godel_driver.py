@@ -365,6 +365,8 @@ def cmd_step(p: dict) -> dict:
         reason = f"exit({e.code})"
     except Exception as e:  # noqa: BLE001
         reason = f"error: {e!r}"[:500]
+        import traceback
+        traceback.print_exc()  # 调用栈进这一轮的日志，方便分清是上游代码还是 agent 改出来的代码抛的
     agent = am.self_evolving_agent
     history = [m if isinstance(m, dict) else {"__msg__": m.model_dump(mode="json")} for m in agent.optimize_history]
     return {"log": rec.log, "history": json.loads(json.dumps(history, default=str)), "solver_source": _solver_source(am),
