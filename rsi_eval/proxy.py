@@ -262,8 +262,30 @@ class MeteringProxy:
             # extra_body：这个模型每次请求都要带的参数（比如关掉思考模式）。timeout：单次请求的读超时，到了就重试，
             # 用来对付偶尔一直不回的线路。
             body = {**{k: v for k, v in req.items() if v is not None}, **(spec.get("extra_body") or {})}
-            return self._post(url, body, {"content-type": "application/json", "authorization": "Bearer " + key},
-                              timeout=float(spec.get("timeout", 900)), stream=bool(spec.get("stream_upstream")) and not req.get("stream"))
+            kw = dict(timeout=float(spec.get("timeout", 900)), stream=bool(spec.get("stream_upstream")) and not req.get("stream"))
+            hdr = {"content-type": "application/json", "authorization": "Bearer " + key}
+            n = int(body.get("n") or 1)
+            if n <= 1 or not spec.get("split_n"):
+                return self._post(url, body, hdr, **kw)
+            # split_n：线路不接受一次请求要多个回复（n > 1）时，拆成 n 次单回复请求再拼回去
+            body.pop("n")
+            merged, usage = None, {"prompt_tokens": 0, "completion_tokens": 0}
+            for i in range(n):
+                code, raw, ctype = self._post(url, body, hdr, **kw)
+                if code != 200:
+                    return code, raw, ctype
+                out = json.loads(raw)
+                for ch in out.get("choices", []):
+                    ch["index"] = i
+                u = out.get("usage") or {}
+                usage["prompt_tokens"] += u.get("prompt_tokens") or 0
+                usage["completion_tokens"] += u.get("completion_tokens") or 0
+                if merged is None:
+                    merged = out
+                else:
+                    merged["choices"].extend(out.get("choices", []))
+            merged["usage"] = {**usage, "total_tokens": usage["prompt_tokens"] + usage["completion_tokens"]}
+            return 200, json.dumps(merged).encode(), "application/json"
         h = {k: v for k, v in headers.items() if k.lower() in ("content-type", "anthropic-version", "anthropic-beta", "accept")}
         key = anthropic_key(self._spec(role))
         if "/messages" in path and key:

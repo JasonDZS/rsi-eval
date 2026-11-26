@@ -72,6 +72,7 @@ models:
     max_tokens: 8192
     stream_upstream: true       # 向上游要流式输出再拼回来：timeout 变成“多久没收到新内容”，挂死的连接很快重试
     timeout: 90
+    split_n: true
   # 价格取 pricepertoken.com 上的标价（非思考版，只有这一处来源），估算。
   qwen3.5-4b:
     provider: openai_compat
@@ -82,6 +83,8 @@ models:
     max_tokens: 8192
     stream_upstream: true
     timeout: 90
+    split_n: true               # 这条线路对 n > 1 返回 400（“n must be 1”）：拆成多次单回复请求
+    extra_body: {enable_thinking: false}   # 默认思考模式下一道算术题要想两千多个 token，常常把上限用完还没给答案
 
 # 角色：executor 执行模型，improver 改进侧模型，transfer 只用于 E5 的迁移测试模型（演化期间不出现）
 model_configs:

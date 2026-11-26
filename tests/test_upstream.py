@@ -359,3 +359,19 @@ def test_streamed_upstream_reply_is_reassembled():
     assert got["usage"] == {"prompt_tokens": 5, "completion_tokens": 7}
     with pytest.raises(ConnectionError):  # 流中途断了要当失败重试，不能当成一条空回复
         _collect_stream(sse({"choices": [{"index": 0, "delta": {"content": "4"}}]}))
+
+
+def test_multi_reply_requests_are_split_for_lines_that_only_allow_one(settings):
+    settings.models["mock-weak"] = {"provider": "openai_compat", "model": "s-1", "base_url": "https://llm.example/v1", "split_n": True,
+                                    "extra_body": {"enable_thinking": False}}
+    px = MeteringProxy(make_root_ctx(settings, "mockA"), "https://api.openai.com")
+    sent = []
+    reply = json.dumps({"choices": [{"index": 0, "message": {"role": "assistant", "content": "a"}}], "usage": {"prompt_tokens": 2, "completion_tokens": 3}}).encode()
+    px._post = lambda url, body, headers, tries=5, **kw: (sent.append(body), (200, reply, "application/json"))[1]
+    try:
+        code, raw, _ = px.forward("/v1/chat/completions", b"", {"model": "s-1", "n": 3, "messages": []}, {}, "executor")
+    finally:
+        px.server.server_close()
+    out = json.loads(raw)
+    assert len(sent) == 3 and all("n" not in b and b["enable_thinking"] is False for b in sent)
+    assert [c["index"] for c in out["choices"]] == [0, 1, 2] and out["usage"]["total_tokens"] == 15
